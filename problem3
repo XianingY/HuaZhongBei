@@ -76,7 +76,7 @@ Integral = np.zeros(365)
 POP_SIZE = 50
 NUM_GENERATIONS = 50
 CROSSOVER_RATE = 0.8
-MUTATION_RATE = 0.05
+MUTATION_RATE = 0.02
 
 
 # 生成初始种群
@@ -176,35 +176,36 @@ def fitness_function(params):
                             (math.cos(omega_ss_rad[s]) - math.cos(omega_sr_rad[s]) * math.cos(delta_rad[d]) * math.sin(
                                 theta_rad[i]) * math.sin(garma_rad[i]))) * (1 / (2 * (
                         math.cos(phi_rad) * math.cos(delta_rad[d]) * math.sin(omega_s_rad[s]) + math.pi / 180 *
-                        omega_s_rad[s] * math.sin(phi_rad) * math.sin(delta_rad[d]))))/2.1
+                        omega_s_rad[s] * math.sin(phi_rad) * math.sin(delta_rad[d]))))
 
     max_midday_data = np.zeros(12)
     Sum = np.zeros(365)
 
-    for index, row in data2.iterrows():
-        month = row['month']
-        if 1 <= month <= 12:
-            start_day = sum(days_in_month[:month - 1])
-            end_day = sum(days_in_month[:month])
-
-            midday_index = start_day + 14
-
-            max_midday_data[month - 1] = Io[midday_index] * proportion
-            for d in range(start_day, end_day):
-                for j in range(100):
-                    X[d, j] = X_523[j] / day_time[1] * day_time[math.floor((month - 1) / 3)]  # 横向等比扩充
-                    Y[d, j] = Io[d] * proportion * disrtibution[j] * 3600 / 1000  # 改单位
-
-                # 使用 trapz() 函数进行数值积分
-
-                Integral[d] = np.trapz(Y[d], X[d])
-                Sum += Integral[d] * Rb[d, s]
-
     fitness_array = np.zeros(len(params))  # 创建适应度数组
 
     for i in range(len(params)):
+        countY = 0  # 重新初始化 countY 变量
 
-        fitness_array[i] = Sum[i]
+        for index, row in data2.iterrows():
+            month = row['month']
+            if 1 <= month <= 12:
+                start_day = sum(days_in_month[:month - 1])
+                end_day = sum(days_in_month[:month])
+
+                midday_index = start_day + 14
+
+                max_midday_data[month - 1] = Io[midday_index] * proportion
+                for d in range(start_day, end_day):
+                    for j in range(100):
+                        X[d, j] = X_523[j] / day_time[1] * day_time[math.floor((month - 1) / 3)]  # 横向等比扩充
+                        Y[d, j] = Io[d] * proportion * disrtibution[j]*Rb[d][s]
+                        if j <= 12 and Y[d, j] >= 150:
+                            countY += 1  # 满足条件的数据点数量加一
+                        elif j > 12 and Y[d, j] >= 100:
+                            countY += 1  # 满足条件的数据点数量加一
+
+
+        fitness_array[i] = countY  # 将满足条件的数据点数量作为适应度值
 
     return fitness_array
 
@@ -230,7 +231,6 @@ def crossover(parent1, parent2):
         return parent1, parent2
 
 
-
 # 变异操作：单点变异
 def mutation(child):
     for i in range(len(child)):
@@ -247,6 +247,7 @@ def genetic_algorithm(pop_size, num_generations):
 
     for generation in range(num_generations):
         fitness = fitness_function(population)
+
         selected_population = selection(population, fitness)
         next_population = []
 
@@ -268,7 +269,8 @@ def genetic_algorithm(pop_size, num_generations):
             best_individual = current_best_individual
             best_fitness = current_best_fitness
 
-        print(f"Generation {generation + 1}: Best Fitness = {best_fitness}, Day Everage = {best_fitness/365}")
+
+        print(f"Generation {generation + 1}: Best Fitness = {best_fitness}, Daytime = {best_fitness*0.13/365}")
 
     return best_individual
 
@@ -276,3 +278,4 @@ def genetic_algorithm(pop_size, num_generations):
 best_params = genetic_algorithm(POP_SIZE, NUM_GENERATIONS)
 best_garma, best_theta = best_params[0], best_params[1]
 print(f"Best Parameters: Garma = {best_garma}, Theta = {best_theta}")
+
