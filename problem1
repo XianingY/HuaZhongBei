@@ -1,0 +1,309 @@
+import pandas as pd
+import math
+import numpy as np
+
+from scipy.interpolate import interp1d
+
+data1 = pd.read_excel('data.xlsx', sheet_name='Sheet1')
+data2 = pd.read_excel('data.xlsx', sheet_name='Sheet2')
+
+# index为距离1月1号的天数
+Io = np.zeros(365)
+delta = np.zeros(365)
+delta_rad = np.zeros(365)
+
+# 每个月的天数列表
+days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+#四个时间段的白天时长
+day_time=[11,13,13,11]
+rise_time=[7,6,6,6.5]
+set_time=[18,19,19,17.5]
+
+Isc = 1360
+
+for index, row in data2.iterrows():
+    month = row['month']
+    if 1 <= month <= 12:
+        start_day = sum(days_in_month[:month - 1])
+        end_day = sum(days_in_month[:month])
+
+        for i in range(start_day, end_day):
+            Io[i] = Isc * (1 + 0.034 * math.cos(2 * math.pi * i / 365))
+            # delta太阳赤纬角,i没问题
+            delta[i] = 23.45 * math.sin(2 * math.pi * (284 + (i + 1)) / 365)
+
+
+x = data1['time']
+y = data1['direct_data']
+
+# 使用线性插值拟合数据
+linear_interp = interp1d(x, y)
+x_new = np.linspace(x.min(), x.max(), 100)  # 新的连续 x 值
+y_linear = linear_interp(x_new)
+
+count=0
+for value in x_new:
+    direct_data = linear_interp(value)
+    if count==0:
+        max_direct_data=direct_data
+    else:
+        max_direct_data=max(direct_data,max_direct_data)
+    # print(max_direct_data)
+    count=count+1
+
+index_523 = 31 + 28 + 31 + 30 + 23 - 1
+#衰减系数
+proportion = max_direct_data/Io[index_523]
+
+
+disrtibution = np.zeros(100)
+
+count=0
+
+#保存value
+X_523=np.zeros(100)
+
+for value in x_new:
+    direct_data = linear_interp(value)
+    X_523[count]=value
+    disrtibution[count] = direct_data / max_direct_data
+
+    count=count+1
+
+
+
+X=np.zeros((365,100))
+Y=np.zeros((365,100))
+Integral = np.zeros(365)
+
+#计算每天的曲线
+for index, row in data2.iterrows():
+    month = row['month']
+    if 1 <= month <= 12:
+        start_day = sum(days_in_month[:month - 1])
+        end_day = sum(days_in_month[:month])
+
+        for i in range(start_day, end_day):
+            for j in range(100):
+                X[i,j]=X_523[j]/day_time[1]*day_time[math.floor((month-1)/3)] #横向等比扩充
+                Y[i,j]=Io[i]*proportion*disrtibution[j]
+
+            Integral[i] = np.trapz(Y[i], X[i])
+# print(Integral)
+
+
+# s光伏阵列倾角
+theta = [20, 40, 60]
+theta_rad = [0, 0, 0]
+garma = 0
+# delta太阳赤纬角
+# omega_h水平面上日落时角
+# omega_s倾斜面上日落时角
+# omega_ss 日出时角
+# omega_sr 日落时角
+# phi太阳能系统的当地维度
+phi = 30.5833
+# T_T太阳时
+
+# index*1/2+6=T_T
+omega_s = np.zeros(27)
+# omega_sr = np.zeros(27)
+# omega_ss = np.zeros(27)
+
+for index, row in data1.iterrows():
+    T_T = row['time']
+    # T_T from 6 to 19
+    omega_index = int(2 * (T_T - 6))
+    omega_s[omega_index] = (T_T - 12) * 15 - 5
+
+omega_sr = omega_s[0]
+omega_ss = omega_s[26]
+
+# print(omega_s)
+
+phi_rad = math.radians(phi)
+garma_rad = math.radians(garma)
+
+# 将角度转换为弧度
+for d in range(0, 365):
+    delta_rad[d] = math.radians(delta[d])
+
+for i in range(0, 3):
+    theta_rad[i] = math.radians(theta[i])
+
+a = np.zeros(3)
+b = np.zeros(3)
+c = np.zeros(3)
+D = np.zeros(3)
+sunrise_time = np.zeros(365)
+sunset_time = np.zeros(365)
+test = np.zeros(365)
+
+for i in range(0, 3):  # i 倾斜角
+    for d in range(365):  # d 距离天数
+        a[i] = math.sin(delta_rad[d]) * (
+                math.sin(phi_rad) * math.cos(theta_rad[i]) - math.cos(phi_rad) * math.sin(theta_rad[i]) * math.cos(
+            garma_rad))
+        b[i] = math.cos(delta_rad[d]) * (
+                math.cos(phi_rad) * math.cos(theta_rad[i]) + math.sin(phi_rad) * math.sin(theta_rad[i]) * math.cos(
+            garma_rad))
+        c[i] = math.cos(delta_rad[d]) * math.sin(theta_rad[i]) * math.sin(garma_rad)
+        D[i] = math.sqrt(math.pow(b[i], 2) + math.pow(c[i], 2))
+
+
+        # sunrise_time[d] = -(1 / 15) * math.acos(
+        #     (math.sin(phi_rad) - math.sin(delta_rad[d])) / (math.cos(phi_rad) * math.cos(delta_rad[d])))
+        # sunset_time[d] = (1 / 15) * math.acos(
+        #     (math.sin(phi_rad) - math.sin(delta_rad[d])) / (math.cos(phi_rad) * math.cos(delta_rad[d])))
+
+    # for j in range(0, 27):  # j 小时
+    #     omega_sr[j] = -min(omega_s[j], math.fabs(-math.acos(-a[i] / D[i]) + math.asin(c[i] / D[i])))
+    #     omega_ss[j] = min(omega_s[j], math.acos(-a[i] / D[i]) + math.asin(c[i] / D[i]))
+
+# print(sunrise_time)
+# print(sunset_time)
+
+
+# 将角度转换为弧度
+omega_s_rad = np.zeros(27)
+# omega_sr_rad = np.zeros(27)
+# omega_ss_rad = np.zeros(27)
+
+
+for j in range(27):
+    # omega_ss_rad[j] = math.radians(omega_ss[j])
+    # omega_sr_rad[j] = math.radians(omega_sr[j])
+    omega_s_rad[j] = math.radians(omega_s[j])
+
+
+# omega_ss=95
+
+
+omega_ss_rad = math.radians(omega_ss)
+omega_sr_rad = math.radians(omega_sr)
+
+# Rb = np.zeros((365, 27, 3))
+# for d in range(365):
+#     for j in range(27):
+#         for i in range(3):
+#             Rb[d][j][i] = (math.pi / 180 * (omega_ss_rad[j] - omega_sr_rad[j]) * math.sin(delta_rad[d]) * (
+#                     math.sin(phi_rad) * math.cos(theta_rad[i]) - math.cos(phi_rad) * math.sin(
+#                 theta_rad[i]) * math.cos(garma_rad)) +
+#                            math.cos(delta_rad[d]) * (math.sin(omega_ss_rad[j]) - math.sin(omega_sr_rad[j])) * (
+#                                    math.cos(phi_rad) * math.cos(theta_rad[i]) + math.sin(phi_rad) * math.sin(
+#                                theta_rad[i]) * math.cos(garma_rad)) +
+#                            (math.cos(omega_ss_rad[j]) - math.cos(omega_sr_rad[j]) * math.cos(delta_rad[d]) * math.sin(
+#                                theta_rad[i]) * math.sin(garma_rad))) * (1 / (2 * (
+#                     math.cos(phi_rad) * math.cos(delta_rad[d]) * math.sin(omega_s_rad[j]) + math.pi / 180 *
+#                     omega_s_rad[j] * math.sin(phi_rad) * math.sin(delta_rad[d]))))
+# print(omega_ss, omega_sr)
+# omega_k=-95
+# omega_k_rad = math.radians(omega_k)
+
+# Rb = np.zeros((365, 27, 3))
+# for d in range(365):
+#     for j in range(27):
+#         for i in range(3):
+#             Rb[d][j][i] = (math.pi / 180 * (omega_ss_rad - omega_sr_rad) * math.sin(delta_rad[d]) * (
+#                         math.sin(phi_rad) * math.cos(theta_rad[i]) - math.cos(phi_rad) * math.sin(
+#                     theta_rad[i]) * math.cos(garma_rad)) +
+#                            math.cos(delta_rad[d]) * (math.sin(omega_ss_rad) - math.sin(omega_sr_rad)) * (
+#                                        math.cos(phi_rad) * math.cos(theta_rad[i]) + math.sin(phi_rad) * math.sin(
+#                                    theta_rad[i]) * math.cos(garma_rad)) -
+#                            (math.cos(omega_ss_rad) - math.cos(omega_sr_rad) * math.cos(delta_rad[d]) * math.sin(
+#                                theta_rad[i]) * math.sin(garma_rad))) * (1 / (2 * (
+#                         math.cos(phi_rad) * math.cos(delta_rad[d]) * math.sin(omega_k_rad) + math.pi / 180 *
+#                         omega_k * math.sin(phi_rad) * math.sin(delta_rad[d]))))
+
+omega_h=np.zeros(365)
+omega_sh=np.zeros(365)
+
+Rb = np.zeros((365, 27, 3))
+for d in range(365):
+    for j in range(27):
+        for i in range(3):
+            omega_h[d] = math.acos(-math.tan(phi_rad) * math.tan(delta_rad[d]))
+            omega_sh[d] = min(omega_h[d], 1 / math.cos(-math.tan(phi_rad - theta_rad[i]) * math.tan(delta_rad[d])))
+
+            Rb[d,j,i] = math.cos(phi_rad - theta_rad[i]) * math.cos(delta_rad[d]) * math.sin(omega_sh[d]) + (
+                        math.pi / 180) * omega_sh[d] * math.sin(phi_rad - theta_rad[i]) * math.sin(delta_rad[d]) / \
+                 math.cos(phi_rad) * math.cos(delta_rad[d]) * math.sin(omega_h[d]) + (math.pi / 180) *omega_h[d] * math.sin(
+                phi_rad) * math.sin(delta_rad[d])
+
+# print(Rb[134])
+
+
+max_midday_data = np.zeros(12)
+problem1_data=np.zeros((12,3))
+
+# 创建一个包含结果的字典
+result_dict = {'Month': [], 'Problem1_Data_0': [], 'Problem1_Data_1': [], 'Problem1_Data_2': []}
+
+# 将结果存储到字典中
+for index, row in data2.iterrows():
+    month = row['month']
+    if 1 <= month <= 12:
+        start_day = sum(days_in_month[:month - 1])
+        end_day = sum(days_in_month[:month])
+
+        midday_index = start_day + 14
+
+        max_midday_data[month - 1] = Io[midday_index] * proportion
+
+        for i in range(3):
+            problem1_data[month-1,i] = max_midday_data[month - 1]*Rb[midday_index,0,i]
+            # print(Rb[midday_index,0,i])
+
+        result_dict['Month'].append(month)  # 修正为 'Month'
+        result_dict['Problem1_Data_0'].append(problem1_data[month-1,0])
+        result_dict['Problem1_Data_1'].append(problem1_data[month-1,1])
+        result_dict['Problem1_Data_2'].append(problem1_data[month-1,2])
+
+# 将字典转换为DataFrame
+result_df = pd.DataFrame(result_dict)
+
+# 将DataFrame保存为Excel文件
+result_df.to_excel('Probelm1_1.xlsx', index=False)
+
+#1-2
+# 创建一个包含结果的字典
+result_dict = {'Month/Sum(kJ)': [], '20degrees': [], '40degrees': [], '60degrees': []}
+
+# 将结果存储到字典中
+for index, row in data2.iterrows():
+    month = row['month']
+    if 1 <= month <= 12:
+        start_day = sum(days_in_month[:month - 1])
+        end_day = sum(days_in_month[:month])
+
+        midday_index = start_day + 14
+
+        max_midday_data[month - 1] = Io[midday_index] * proportion
+        for d in range(start_day, end_day):
+            for j in range(100):
+                for i in range(3):
+                    X[d, j] = X_523[j] / day_time[1] * day_time[math.floor((month - 1) / 3)]  # 横向等比扩充
+                    Y[d, j] = Io[d] * proportion * disrtibution[j]*3600/1000 #改单位
+
+            # 使用 trapz() 函数进行数值积分
+            Integral[d] = np.trapz(Y[d], X[d])
+
+
+        result_dict['Month/Sum(kJ)'].append(month)
+        for i in range(3):
+            if i==0:
+                result_dict['20degrees'].append(Integral[midday_index]*Rb[midday_index, 0, i])
+            elif i==1:
+                result_dict['40degrees'].append(Integral[midday_index]*Rb[midday_index, 0, i])
+            elif i==2:
+                result_dict['60degrees'].append(Integral[midday_index]*Rb[midday_index, 0, i])
+
+
+# 将字典转换为DataFrame
+result_df = pd.DataFrame(result_dict)
+
+# 将DataFrame保存为Excel文件
+result_df.to_excel('Probelm1_2.xlsx', index=False)
+
+
